@@ -1,0 +1,13 @@
+services:
+  pheme:
+    build: .
+    image: pheme:latest
+    container_name: pheme
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    # The default bridge network reaches the CPE (192.168.8.1) through the Pi's
+    # NAT with no extra config. If routing to the CPE subnet fails, fall back to
+    # host networking by uncommenting the line below (and remove the bridge):
+    # network_mode: host
