@@ -1,6 +1,21 @@
-# Slim, non-root, multi-arch image. The base python:3.11-slim is published for
-# amd64, arm64 and arm/v7, and all dependencies are pure Python, so the same
-# Dockerfile builds for a Raspberry Pi without any cross-compilation toolchain.
+# Multi-arch (amd64 / arm64 / arm/v7) and slim. Some dependencies (pycryptodomex,
+# pulled in by huawei-lte-api) ship no prebuilt wheel for arm/v7, so they must be
+# compiled. We do that in a throwaway builder stage that carries the toolchain,
+# then install the resulting wheels into a clean slim image with no compiler.
+
+FROM python:3.11-slim AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+# Build wheels for the project and all its dependencies into /wheels.
+RUN pip wheel --no-cache-dir --wheel-dir /wheels .
+
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -9,9 +24,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY src ./src
-RUN pip install --no-cache-dir .
+# Install purely from the prebuilt wheels — no network, no compiler needed.
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels pheme \
+    && rm -rf /wheels
 
 # Run as an unprivileged user and own the state volume.
 RUN useradd --create-home --uid 1000 pheme \
