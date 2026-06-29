@@ -3,7 +3,7 @@
 [![CI](https://github.com/Upellift99/Pheme/actions/workflows/ci.yml/badge.svg)](https://github.com/Upellift99/Pheme/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
-[![Docker multi-arch](https://img.shields.io/badge/docker-mult--arch-2496ED?logo=docker&logoColor=white)](Dockerfile)
+[![Docker image](https://img.shields.io/badge/ghcr.io-pheme-2496ED?logo=docker&logoColor=white)](https://github.com/Upellift99/Pheme/pkgs/container/pheme)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Upellift99/Pheme/pulls)
 
@@ -132,6 +132,16 @@ docker compose logs -f
 State persists in `./data` (mounted at `/data`). The container runs as a
 non-root user and exposes a healthcheck based on the CPE's `sms_count()` — the
 container is reported healthy only while the CPE is reachable.
+
+Prefer the prebuilt multi-arch image instead of building locally? Replace the
+`build: .` line in `docker-compose.yml` with:
+
+```yaml
+    image: ghcr.io/upellift99/pheme:latest
+```
+
+The image is published to GHCR by CI for `linux/amd64`, `linux/arm64` and
+`linux/arm/v7`, so it runs on a Raspberry Pi out of the box.
 
 ### Locally (development)
 
