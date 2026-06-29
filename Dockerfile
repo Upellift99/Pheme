@@ -3,7 +3,7 @@
 # compiled. We do that in a throwaway builder stage that carries the toolchain,
 # then install the resulting wheels into a clean slim image with no compiler.
 
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
@@ -16,7 +16,7 @@ COPY src ./src
 RUN pip wheel --no-cache-dir --wheel-dir /wheels .
 
 
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -8,11 +8,16 @@ on:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.11 is the declared minimum (requires-python); 3.14 is the runtime
+        # image base. Test both ends so neither regresses.
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - name: Install
         run: pip install -e ".[dev]"
       - name: Lint
