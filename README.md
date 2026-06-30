@@ -125,12 +125,18 @@ All configuration is via environment variables (see `.env.example`):
 ```bash
 cp .env.example .env
 # edit .env with your CPE password, homeserver, token, user id and room id
+mkdir -p ./data && chown -R 1000:1000 ./data
 docker compose up -d --build
 docker compose logs -f
 ```
 
 State persists in `./data` (mounted at `/data`). The container runs as a
-non-root user and exposes a healthcheck based on the CPE's `sms_count()` — the
+non-root user (uid 1000), so the bind-mounted `./data` must be writable by that
+uid — hence the `chown` above. Skip it and SQLite fails at startup with
+`unable to open database file`. (Alternatively, add `user: root` to the service
+in `docker-compose.yml` to sidestep ownership entirely.)
+
+The container exposes a healthcheck based on the CPE's `sms_count()` — the
 container is reported healthy only while the CPE is reachable.
 
 Prefer the prebuilt multi-arch image instead of building locally? Replace the
