@@ -2,9 +2,27 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from tests.test_loops import make_cfg
 
 from pheme import __main__ as main
+from pheme.config import Config
+
+
+def make_cfg():
+    return Config(
+        huawei_host="192.168.8.1",
+        huawei_user="admin",
+        huawei_password="pw",
+        matrix_homeserver="https://matrix.example.org",
+        matrix_token="tok",
+        matrix_user_id="@phemebot:example.org",
+        matrix_room_id="!room:example.org",
+        poll_interval=60,
+        state_db=":memory:",
+        mark_as_read=False,
+        delete_after_relay=False,
+        allow_outbound=True,
+        log_level="INFO",
+    )
 
 
 class FakeMatrix:
