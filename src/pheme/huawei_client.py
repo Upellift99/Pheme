@@ -114,12 +114,14 @@ class HuaweiClient:
             for index in read_indices:
                 try:
                     client.sms.set_read(index)
-                except Exception:  # noqa: BLE001 — best-effort, never fatal
+                # best-effort, never fatal
+                except Exception:  # noqa: BLE001
                     log.warning("set_read failed", extra={"extra_fields": {"index": index}})
             for index in delete_indices:
                 try:
                     client.sms.delete_sms(index)
-                except Exception:  # noqa: BLE001 — best-effort, never fatal
+                # best-effort, never fatal
+                except Exception:  # noqa: BLE001
                     log.warning("delete_sms failed", extra={"extra_fields": {"index": index}})
 
     def sms_count(self) -> dict:
