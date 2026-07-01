@@ -65,7 +65,7 @@ class FakeMatrix:
         self.notifications = []
         self.initial_side_effects = None
         self.initial_calls = 0
-        self.sync_queue = []
+        self.sync_side_effects = []
         self.sync_calls = 0
 
     async def relay_sms(self, s):
@@ -79,15 +79,18 @@ class FakeMatrix:
         self.initial_calls += 1
         if self.initial_side_effects:
             effect = self.initial_side_effects.pop(0)
-            if isinstance(effect, Exception):
+            if isinstance(effect, BaseException):
                 raise effect
             return effect
         return "s0"
 
     async def sync(self, since):
         self.sync_calls += 1
-        if self.sync_queue:
-            return self.sync_queue.pop(0)
+        if self.sync_side_effects:
+            effect = self.sync_side_effects.pop(0)
+            if isinstance(effect, BaseException):
+                raise effect
+            return effect
         raise asyncio.CancelledError
 
 
@@ -233,7 +236,8 @@ def test_outbound_fetches_initial_token_with_retry(quiet_sleep):
 
 def test_outbound_processes_messages_and_advances_token(quiet_sleep):
     matrix = FakeMatrix()
-    matrix.sync_queue = [("s1", [MatrixMessage(event_id="$1", sender=USER, body="just chatting")])]
+    msg = MatrixMessage(event_id="$1", sender=USER, body="just chatting")
+    matrix.sync_side_effects = [("s1", [msg])]
     store = FakeStore(sync_token="s0")
 
     with pytest.raises(asyncio.CancelledError):
@@ -241,6 +245,30 @@ def test_outbound_processes_messages_and_advances_token(quiet_sleep):
 
     assert matrix.sync_calls == 2  # one that returns, one that stops
     assert store.sync_token == "s1"
+
+
+def test_outbound_backs_off_on_sync_error(quiet_sleep):
+    matrix = FakeMatrix()
+    # First sync raises a transient error, second stops the loop.
+    matrix.sync_side_effects = [RuntimeError("sync boom")]
+    store = FakeStore(sync_token="s0")
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(loops.outbound_loop(make_cfg(), FakeHuawei(), matrix, store))
+
+    assert quiet_sleep == [5.0]  # backoff after the error
+
+
+def test_outbound_initial_token_propagates_cancellation(quiet_sleep):
+    matrix = FakeMatrix()
+    matrix.initial_side_effects = [asyncio.CancelledError()]
+    store = FakeStore(sync_token=None)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(loops.outbound_loop(make_cfg(), FakeHuawei(), matrix, store))
+
+    assert matrix.initial_calls == 1
+    assert quiet_sleep == []  # cancellation is re-raised, not backed off
 
 
 # --- _handle_message ---------------------------------------------------
