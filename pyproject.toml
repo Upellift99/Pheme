@@ -39,3 +39,9 @@ select = ["E", "F", "I", "UP", "B", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.report]
+exclude_also = [
+    # Module entrypoint guards are exercised only when run as a script.
+    'if __name__ == .__main__.:',
+]
