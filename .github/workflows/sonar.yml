@@ -1,0 +1,33 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sonarqube:
+    name: Analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Shallow clones should be disabled for a better relevancy of analysis.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: pip install -e ".[dev]" pytest-cov
+      - name: Test with coverage
+        run: pytest -q --cov=src/pheme --cov-report=xml
+      - uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      # If you wish to fail your job when the Quality Gate is red, uncomment the
+      # following lines. This would typically be used to fail a deployment.
+      # - uses: SonarSource/sonarqube-quality-gate-action@v1
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
