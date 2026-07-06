@@ -9,6 +9,9 @@ jobs:
   sonarqube:
     name: Analyze
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,10 +24,11 @@ jobs:
         run: pip install -e ".[dev]" pytest-cov
       - name: Test with coverage
         run: pytest -q --cov=src/pheme --cov-report=xml
+      # Skip the scan when SONAR_TOKEN is unavailable (e.g. Dependabot or fork
+      # PRs cannot access repository secrets), so the job stays green instead of
+      # failing on an empty token.
       - uses: SonarSource/sonarqube-scan-action@v8
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        if: ${{ env.SONAR_TOKEN != '' }}
       # If you wish to fail your job when the Quality Gate is red, uncomment the
       # following lines. This would typically be used to fail a deployment.
       # - uses: SonarSource/sonarqube-quality-gate-action@v1
