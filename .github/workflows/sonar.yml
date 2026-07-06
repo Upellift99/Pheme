@@ -21,7 +21,7 @@ jobs:
         run: pip install -e ".[dev]" pytest-cov
       - name: Test with coverage
         run: pytest -q --cov=src/pheme --cov-report=xml
-      - uses: SonarSource/sonarqube-scan-action@v6
+      - uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
