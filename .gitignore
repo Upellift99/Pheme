@@ -12,3 +12,6 @@ data/
 .pytest_cache/
 .coverage
 coverage.xml
+
+# claude code memory (synced via Syncthing, see ~/.claude/projects/.../memory symlink)
+.claude-memory/
