@@ -1,0 +1,15 @@
+{
+  "mcps": {
+    "github": {
+      "toolsets": "context,repos,actions,orgs,users"
+    },
+    "sonarqube": {
+      "project_key": "Upellift99_Pheme_e9ed11f1-ecc0-4d23-bc08-88705135bbc5"
+    },
+    "glitchtip": false,
+    "zabbix": false
+  },
+  "bypass_permissions": true,
+  "permissions_guard": true,
+  "memory_sync": true
+}
