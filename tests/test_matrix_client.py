@@ -236,6 +236,4 @@ def test_extract_defaults_missing_fields_to_empty_string():
             }
         }
     }
-    assert client._extract_room_messages(data) == [
-        MatrixMessage(event_id="", sender="", body="")
-    ]
+    assert client._extract_room_messages(data) == [MatrixMessage(event_id="", sender="", body="")]
