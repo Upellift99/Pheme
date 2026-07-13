@@ -47,9 +47,7 @@ class Store:
 
     def is_relayed(self, index: int) -> bool:
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT 1 FROM relayed_sms WHERE sms_index = ?", (index,)
-            )
+            cur = self._conn.execute("SELECT 1 FROM relayed_sms WHERE sms_index = ?", (index,))
             return cur.fetchone() is not None
 
     def mark_relayed(self, index: int, phone: str, date: str) -> None:
