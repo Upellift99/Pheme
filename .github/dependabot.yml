@@ -8,6 +8,14 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # Workflows track the floating major tag (@v4), which already picks up
+      # every minor/patch release — including CodeQL bundle updates. Only
+      # surface major bumps, which do need a manual look.
+      - dependency-name: github/codeql-action
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
   - package-ecosystem: docker
     directory: "/"
     schedule:
