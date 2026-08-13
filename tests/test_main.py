@@ -66,6 +66,23 @@ def test_run_wires_components_and_closes_on_exit(monkeypatch):
     assert store.closed is True
 
 
+def test_run_logs_alert_threshold_at_startup(monkeypatch, caplog):
+    """The startup line must echo the alert threshold, so it can be confirmed."""
+    matrix, store = FakeMatrix(), FakeStore()
+
+    async def noop_loop(*args):
+        return None
+
+    wire(monkeypatch, make_cfg(), matrix, store, noop_loop)
+
+    with caplog.at_level("INFO", logger="pheme"):
+        asyncio.run(main.run())
+
+    startup = [r for r in caplog.records if r.msg == "starting pheme"]
+    assert startup, "no startup record logged"
+    assert startup[0].extra_fields["alert_after_failures"] == 5
+
+
 def test_run_closes_resources_even_on_loop_error(monkeypatch):
     matrix, store = FakeMatrix(), FakeStore()
 
