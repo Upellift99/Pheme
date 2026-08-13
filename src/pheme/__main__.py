@@ -31,6 +31,7 @@ async def run() -> None:
                 "allow_outbound": cfg.allow_outbound,
                 "mark_as_read": cfg.mark_as_read,
                 "delete_after_relay": cfg.delete_after_relay,
+                "alert_after_failures": cfg.alert_after_failures,
             }
         },
     )
