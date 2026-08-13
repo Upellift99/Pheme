@@ -46,10 +46,39 @@ async def _notify_safe(matrix: MatrixClient, text: str) -> None:
         log.exception("failed to post health alert to matrix")
 
 
+async def _relay_new_messages(
+    cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
+) -> None:
+    """Run one poll cycle: relay every unseen inbox message, then apply CPE flags."""
+    messages = await asyncio.to_thread(huawei.list_inbox)
+    relayed = []
+    for sms in messages:
+        if store.is_relayed(sms.index):
+            continue
+        await matrix.relay_sms(sms)
+        store.mark_relayed(sms.index, sms.phone, sms.date)
+        relayed.append(sms)
+        log.info(
+            "relayed inbound sms",
+            extra={
+                "extra_fields": {
+                    "index": sms.index,
+                    "phone": sms.phone,
+                    "segments": estimate_segments(sms.content),
+                }
+            },
+        )
+
+    if relayed and (cfg.mark_as_read or cfg.delete_after_relay):
+        read_indices = [s.index for s in relayed if cfg.mark_as_read and s.unread]
+        delete_indices = [s.index for s in relayed if cfg.delete_after_relay]
+        await asyncio.to_thread(huawei.finalize, read_indices, delete_indices)
+
+
 async def inbound_loop(
     cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
 ) -> None:
-    """Poll the CPE inbox and relay new SMS to Matrix.
+    """Poll the CPE inbox on a timer, retrying and alerting when cycles fail.
 
     Inbound failures are otherwise invisible — nothing is posted to the room when
     the CPE is unreachable, so a dead bridge looks exactly like a quiet one. After
@@ -61,30 +90,7 @@ async def inbound_loop(
     alerted = False
     while True:
         try:
-            messages = await asyncio.to_thread(huawei.list_inbox)
-            relayed = []
-            for sms in messages:
-                if store.is_relayed(sms.index):
-                    continue
-                await matrix.relay_sms(sms)
-                store.mark_relayed(sms.index, sms.phone, sms.date)
-                relayed.append(sms)
-                log.info(
-                    "relayed inbound sms",
-                    extra={
-                        "extra_fields": {
-                            "index": sms.index,
-                            "phone": sms.phone,
-                            "segments": estimate_segments(sms.content),
-                        }
-                    },
-                )
-
-            if relayed and (cfg.mark_as_read or cfg.delete_after_relay):
-                read_indices = [s.index for s in relayed if cfg.mark_as_read and s.unread]
-                delete_indices = [s.index for s in relayed if cfg.delete_after_relay]
-                await asyncio.to_thread(huawei.finalize, read_indices, delete_indices)
-
+            await _relay_new_messages(cfg, huawei, matrix, store)
             backoff.reset()
             if alerted:
                 await _notify_safe(
