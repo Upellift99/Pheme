@@ -25,6 +25,7 @@ def make_cfg(**overrides):
         mark_as_read=False,
         delete_after_relay=False,
         allow_outbound=True,
+        alert_after_failures=5,
         log_level="INFO",
     )
     base.update(overrides)
@@ -133,6 +134,24 @@ def record_sleep(monkeypatch):
 
 
 @pytest.fixture
+def stop_after(monkeypatch):
+    """Return an installer that stops the loop after ``n`` sleeps."""
+
+    def install(n):
+        calls = []
+
+        async def fake_sleep(delay):
+            calls.append(delay)
+            if len(calls) >= n:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(loops.asyncio, "sleep", fake_sleep)
+        return calls
+
+    return install
+
+
+@pytest.fixture
 def quiet_sleep(monkeypatch):
     """Replace asyncio.sleep with a no-op recorder (loops broken elsewhere)."""
     calls = []
@@ -208,6 +227,134 @@ def test_inbound_backs_off_on_error(record_sleep):
 
     assert record_sleep == [5.0]  # first backoff delay
     assert matrix.relayed == []
+
+
+# --- inbound_loop health alerting --------------------------------------
+
+
+class FlakyHuawei(FakeHuawei):
+    """Fails ``fail_times`` polls, then succeeds."""
+
+    def __init__(self, fail_times):
+        super().__init__()
+        self.remaining = fail_times
+
+    def list_inbox(self):
+        if self.remaining > 0:
+            self.remaining -= 1
+            raise RuntimeError("cpe down")
+        return list(self.inbox)
+
+
+class BrokenMatrix(FakeMatrix):
+    async def notify(self, text):
+        raise RuntimeError("homeserver down")
+
+
+def test_inbound_alerts_room_after_threshold(stop_after):
+    huawei = FakeHuawei()
+    huawei.list_error = RuntimeError("cpe down")
+    matrix = FakeMatrix()
+    stop_after(3)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(make_cfg(alert_after_failures=3), huawei, matrix, FakeStore())
+        )
+
+    assert len(matrix.notifications) == 1
+    assert matrix.notifications[0].startswith("⚠️")
+    assert "3 consecutive poll failures" in matrix.notifications[0]
+    assert "RuntimeError: cpe down" in matrix.notifications[0]
+
+
+def test_inbound_stays_quiet_below_threshold(stop_after):
+    huawei = FakeHuawei()
+    huawei.list_error = RuntimeError("cpe down")
+    matrix = FakeMatrix()
+    stop_after(3)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(make_cfg(alert_after_failures=5), huawei, matrix, FakeStore())
+        )
+
+    assert matrix.notifications == []
+
+
+def test_inbound_alerts_only_once_per_outage(stop_after):
+    huawei = FakeHuawei()
+    huawei.list_error = RuntimeError("cpe down")
+    matrix = FakeMatrix()
+    stop_after(6)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(make_cfg(alert_after_failures=2), huawei, matrix, FakeStore())
+        )
+
+    assert len(matrix.notifications) == 1  # not one per failed cycle
+
+
+def test_inbound_reports_recovery_after_alerting(stop_after):
+    matrix = FakeMatrix()
+    stop_after(3)  # two backoff sleeps, then one poll_interval sleep
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(
+                make_cfg(alert_after_failures=2), FlakyHuawei(2), matrix, FakeStore()
+            )
+        )
+
+    assert len(matrix.notifications) == 2
+    assert matrix.notifications[0].startswith("⚠️")
+    assert matrix.notifications[1].startswith("✅")
+    assert "resumed after 2 failed poll(s)" in matrix.notifications[1]
+
+
+def test_inbound_no_recovery_message_without_prior_alert(stop_after):
+    matrix = FakeMatrix()
+    stop_after(2)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(
+                make_cfg(alert_after_failures=5), FlakyHuawei(1), matrix, FakeStore()
+            )
+        )
+
+    assert matrix.notifications == []
+
+
+def test_inbound_alerting_disabled_by_zero(stop_after):
+    huawei = FakeHuawei()
+    huawei.list_error = RuntimeError("cpe down")
+    matrix = FakeMatrix()
+    stop_after(4)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(make_cfg(alert_after_failures=0), huawei, matrix, FakeStore())
+        )
+
+    assert matrix.notifications == []
+
+
+def test_inbound_survives_matrix_failure_while_alerting(stop_after):
+    huawei = FakeHuawei()
+    huawei.list_error = RuntimeError("cpe down")
+    calls = stop_after(4)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops.inbound_loop(
+                make_cfg(alert_after_failures=2), huawei, BrokenMatrix(), FakeStore()
+            )
+        )
+
+    # A dead homeserver must not add a second failure on top of the CPE outage.
+    assert len(calls) == 4
 
 
 # --- outbound_loop -----------------------------------------------------

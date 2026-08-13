@@ -34,6 +34,12 @@ Two independent async loops share one Huawei client and one SQLite store:
 A failure in one loop never stops the other, and a network/auth/Matrix error in a
 cycle is logged and retried with exponential backoff rather than crashing.
 
+**Outage alerting:** a failing inbound loop is otherwise invisible — nothing is
+posted to the room when the CPE is unreachable, so a dead bridge looks exactly
+like a quiet one. After `ALERT_AFTER_FAILURES` consecutive failed polls the room
+gets one warning naming the underlying error, and one all-clear once polling
+recovers. One message per outage, not one per failed cycle.
+
 ## Command syntax (outbound)
 
 Type these in the bridged Matrix room:
@@ -116,6 +122,7 @@ All configuration is via environment variables (see `.env.example`):
 | `MARK_AS_READ` | `false` | Mark relayed SMS as read on the CPE. |
 | `DELETE_AFTER_RELAY` | `false` | Delete relayed SMS from the CPE. |
 | `ALLOW_OUTBOUND` | `true` | Set `false` for a read-only bridge. |
+| `ALERT_AFTER_FAILURES` | `5` | Consecutive failed inbox polls before the room is warned. `0` disables. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ## Running

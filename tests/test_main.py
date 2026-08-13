@@ -21,6 +21,7 @@ def make_cfg():
         mark_as_read=False,
         delete_after_relay=False,
         allow_outbound=True,
+        alert_after_failures=5,
         log_level="INFO",
     )
 
