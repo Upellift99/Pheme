@@ -32,11 +32,33 @@ class Backoff:
         return delay
 
 
+async def _notify_safe(matrix: MatrixClient, text: str) -> None:
+    """Post to the room, swallowing Matrix errors.
+
+    Used from health alerting only: a homeserver outage must never turn into a
+    second failure on top of the one we are trying to report.
+    """
+    try:
+        await matrix.notify(text)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("failed to post health alert to matrix")
+
+
 async def inbound_loop(
     cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
 ) -> None:
-    """Poll the CPE inbox and relay new SMS to Matrix."""
+    """Poll the CPE inbox and relay new SMS to Matrix.
+
+    Inbound failures are otherwise invisible — nothing is posted to the room when
+    the CPE is unreachable, so a dead bridge looks exactly like a quiet one. After
+    ``ALERT_AFTER_FAILURES`` consecutive failed cycles the room gets one warning,
+    and one all-clear once polling recovers.
+    """
     backoff = Backoff()
+    failures = 0
+    alerted = False
     while True:
         try:
             messages = await asyncio.to_thread(huawei.list_inbox)
@@ -64,14 +86,32 @@ async def inbound_loop(
                 await asyncio.to_thread(huawei.finalize, read_indices, delete_indices)
 
             backoff.reset()
+            if alerted:
+                await _notify_safe(
+                    matrix,
+                    f"✅ CPE reachable again — inbound relay resumed after {failures} "
+                    "failed poll(s).",
+                )
+                alerted = False
+            failures = 0
             await asyncio.sleep(cfg.poll_interval)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — one bad cycle must never kill the loop
+        except Exception as exc:  # noqa: BLE001 — one bad cycle must never kill the loop
+            failures += 1
             delay = backoff.next()
             log.exception(
-                "inbound loop error; retrying", extra={"extra_fields": {"retry_in": delay}}
+                "inbound loop error; retrying",
+                extra={"extra_fields": {"retry_in": delay, "consecutive_failures": failures}},
             )
+            if not alerted and 0 < cfg.alert_after_failures <= failures:
+                alerted = True
+                await _notify_safe(
+                    matrix,
+                    f"⚠️ Inbound relay down: {failures} consecutive poll failures. "
+                    f"No SMS is being relayed. Last error: "
+                    f"{type(exc).__name__}: {str(exc)[:200] or '(no detail)'}",
+                )
             await asyncio.sleep(delay)
 
 

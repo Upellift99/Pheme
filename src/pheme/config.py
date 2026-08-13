@@ -57,6 +57,7 @@ class Config:
     mark_as_read: bool
     delete_after_relay: bool
     allow_outbound: bool
+    alert_after_failures: int
     log_level: str
 
     @classmethod
@@ -74,5 +75,6 @@ class Config:
             mark_as_read=_bool("MARK_AS_READ", False),
             delete_after_relay=_bool("DELETE_AFTER_RELAY", False),
             allow_outbound=_bool("ALLOW_OUTBOUND", True),
+            alert_after_failures=_int("ALERT_AFTER_FAILURES", 5),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
         )

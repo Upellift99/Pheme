@@ -34,6 +34,12 @@ Two independent async loops share one Huawei client and one SQLite store:
 A failure in one loop never stops the other, and a network/auth/Matrix error in a
 cycle is logged and retried with exponential backoff rather than crashing.
 
+**Outage alerting:** a failing inbound loop is otherwise invisible — nothing is
+posted to the room when the CPE is unreachable, so a dead bridge looks exactly
+like a quiet one. After `ALERT_AFTER_FAILURES` consecutive failed polls the room
+gets one warning naming the underlying error, and one all-clear once polling
+recovers. One message per outage, not one per failed cycle.
+
 ## Command syntax (outbound)
 
 Type these in the bridged Matrix room:
@@ -77,6 +83,33 @@ Important routing notes:
 - With Docker's default bridge network, the container reaches `192.168.8.1`
   through the Pi's NAT with no special configuration. If routing to the CPE
   fails, uncomment `network_mode: host` in `docker-compose.yml` as a fallback.
+- **If the CPE link is Wi-Fi, turn off power save on that interface.** The
+  Raspberry Pi's `brcmfmac` driver enables it by default; it drops the
+  association and `wpa_supplicant` can stay stuck in `SCANNING` indefinitely,
+  with full signal and correct credentials. Every CPE call then fails with
+  `Errno 110` and the bridge relays nothing until someone runs
+  `wpa_cli -i wlan0 reassociate` by hand. Make it persistent with a unit bound
+  to the interface, so it also re-applies when `wlan0` reappears:
+
+  ```ini
+  # /etc/systemd/system/wifi-powersave-off.service
+  [Unit]
+  Description=Disable Wi-Fi power save on wlan0
+  BindsTo=sys-subsystem-net-devices-wlan0.device
+  After=sys-subsystem-net-devices-wlan0.device
+
+  [Service]
+  Type=oneshot
+  RemainAfterExit=yes
+  ExecStart=/usr/sbin/iw dev wlan0 set power_save off
+
+  [Install]
+  WantedBy=sys-subsystem-net-devices-wlan0.device
+  ```
+
+  ```bash
+  systemctl daemon-reload && systemctl enable --now wifi-powersave-off.service
+  ```
 
 ## Getting a Matrix bot access token
 
@@ -116,6 +149,7 @@ All configuration is via environment variables (see `.env.example`):
 | `MARK_AS_READ` | `false` | Mark relayed SMS as read on the CPE. |
 | `DELETE_AFTER_RELAY` | `false` | Delete relayed SMS from the CPE. |
 | `ALLOW_OUTBOUND` | `true` | Set `false` for a read-only bridge. |
+| `ALERT_AFTER_FAILURES` | `5` | Consecutive failed inbox polls before the room is warned. `0` disables. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ## Running

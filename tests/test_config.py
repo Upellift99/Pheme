@@ -23,6 +23,7 @@ def clean_env(monkeypatch):
         "MARK_AS_READ",
         "DELETE_AFTER_RELAY",
         "ALLOW_OUTBOUND",
+        "ALERT_AFTER_FAILURES",
         "LOG_LEVEL",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -98,6 +99,7 @@ def test_from_env_defaults(clean_env):
     assert cfg.mark_as_read is False
     assert cfg.delete_after_relay is False
     assert cfg.allow_outbound is True
+    assert cfg.alert_after_failures == 5
     assert cfg.log_level == "INFO"
 
 
@@ -112,6 +114,7 @@ def test_from_env_overrides_and_strips_homeserver_slash(clean_env):
     clean_env.setenv("MARK_AS_READ", "yes")
     clean_env.setenv("DELETE_AFTER_RELAY", "1")
     clean_env.setenv("ALLOW_OUTBOUND", "no")
+    clean_env.setenv("ALERT_AFTER_FAILURES", "0")
     clean_env.setenv("LOG_LEVEL", "DEBUG")
 
     cfg = Config.from_env()
@@ -124,6 +127,7 @@ def test_from_env_overrides_and_strips_homeserver_slash(clean_env):
     assert cfg.mark_as_read is True
     assert cfg.delete_after_relay is True
     assert cfg.allow_outbound is False
+    assert cfg.alert_after_failures == 0
     assert cfg.log_level == "DEBUG"
 
 
