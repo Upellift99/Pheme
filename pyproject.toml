@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pheme"
-version = "0.2.1"
+version = "0.3.0"
 description = "A self-hosted SMS <-> Matrix bridge for Huawei HiLink 4G CPEs"
 readme = "README.md"
 license = { text = "MIT" }
