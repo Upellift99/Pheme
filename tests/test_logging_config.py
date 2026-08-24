@@ -72,3 +72,22 @@ def test_setup_logging_installs_single_json_handler():
     finally:
         root.handlers[:] = original_handlers
         root.setLevel(original_level)
+
+
+def test_setup_logging_never_lets_huawei_lte_api_log_at_debug():
+    # huawei-lte-api 2.x logs the CPE password at DEBUG; LOG_LEVEL=debug must
+    # not turn that on.
+    root = logging.getLogger()
+    vendor = logging.getLogger("huawei_lte_api")
+    original_handlers = root.handlers[:]
+    original_level = root.level
+    original_vendor_level = vendor.level
+    try:
+        setup_logging("debug")
+        assert root.level == logging.DEBUG
+        assert vendor.level == logging.INFO
+        assert not vendor.isEnabledFor(logging.DEBUG)
+    finally:
+        root.handlers[:] = original_handlers
+        root.setLevel(original_level)
+        vendor.setLevel(original_vendor_level)
