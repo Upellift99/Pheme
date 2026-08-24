@@ -31,3 +31,9 @@ def setup_logging(level: str) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
+    # huawei-lte-api 2.x logs the CPE credentials in clear text at DEBUG
+    # (Connection.py: `_LOGGER.debug("Password: %s", password)`). LOG_LEVEL is
+    # operator-facing and DEBUG is exactly what you reach for when the CPE stops
+    # answering, so floor that logger at INFO rather than leak HUAWEI_PASSWORD
+    # into stdout — and from there into the container logs.
+    logging.getLogger("huawei_lte_api").setLevel(logging.INFO)
