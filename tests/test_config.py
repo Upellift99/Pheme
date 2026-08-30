@@ -1,6 +1,6 @@
 import pytest
 
-from pheme.config import Config, ConfigError, _bool, _int, _required
+from pheme.config import Config, ConfigError, _bool, _float, _int, _required
 
 REQUIRED_ENV = {
     "HUAWEI_PASSWORD": "secret",
@@ -82,6 +82,21 @@ def test_int_invalid_raises(clean_env):
     clean_env.setenv("NUM", "abc")
     with pytest.raises(ConfigError, match="Invalid integer for NUM"):
         _int("NUM", default=60)
+
+
+def test_float_default_when_unset(clean_env):
+    assert _float("DELAY", default=5.0) == 5.0
+
+
+def test_float_parses_value(clean_env):
+    clean_env.setenv("DELAY", "2.5")
+    assert _float("DELAY", default=5.0) == 2.5
+
+
+def test_float_invalid_raises(clean_env):
+    clean_env.setenv("DELAY", "abc")
+    with pytest.raises(ConfigError, match="Invalid number for DELAY"):
+        _float("DELAY", default=5.0)
 
 
 def test_from_env_defaults(clean_env):

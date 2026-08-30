@@ -9,7 +9,7 @@ import os
 from .config import Config
 from .huawei_client import HuaweiClient
 from .logging_config import setup_logging
-from .loops import inbound_loop, outbound_loop
+from .loops import CpeGate, inbound_loop, outbound_loop
 from .matrix_client import MatrixClient
 from .store import Store
 
@@ -32,6 +32,7 @@ async def run() -> None:
                 "mark_as_read": cfg.mark_as_read,
                 "delete_after_relay": cfg.delete_after_relay,
                 "alert_after_failures": cfg.alert_after_failures,
+                "send_min_interval": cfg.send_min_interval,
             }
         },
     )
@@ -42,10 +43,14 @@ async def run() -> None:
         cfg.matrix_homeserver, cfg.matrix_token, cfg.matrix_room_id, cfg.matrix_user_id
     )
 
+    # Un seul portail pour les deux boucles : le CPE ne supporte pas qu'un poll
+    # d'inbox et un envoi se chevauchent.
+    gate = CpeGate(cfg.send_min_interval)
+
     try:
         await asyncio.gather(
-            inbound_loop(cfg, huawei, matrix, store),
-            outbound_loop(cfg, huawei, matrix, store),
+            inbound_loop(cfg, huawei, matrix, store, gate),
+            outbound_loop(cfg, huawei, matrix, store, gate),
         )
     finally:
         await matrix.aclose()

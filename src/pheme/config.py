@@ -43,6 +43,16 @@ def _int(name: str, default: int) -> int:
         raise ConfigError(f"Invalid integer for {name}: {raw!r}") from exc
 
 
+def _float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid number for {name}: {raw!r}") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     huawei_host: str
@@ -59,6 +69,12 @@ class Config:
     allow_outbound: bool
     alert_after_failures: int
     log_level: str
+    # Écart minimal entre deux envois : la SIM ne traite qu'un SMS à la fois, et
+    # une deuxième commande arrivée trop tôt échoue.
+    send_min_interval: float = 5.0
+    # Un envoi refusé par un CPE occupé passe presque toujours au second essai.
+    send_retries: int = 1
+    send_retry_delay: float = 5.0
 
     @classmethod
     def from_env(cls) -> Config:
@@ -77,4 +93,7 @@ class Config:
             allow_outbound=_bool("ALLOW_OUTBOUND", True),
             alert_after_failures=_int("ALERT_AFTER_FAILURES", 5),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
+            send_min_interval=_float("SEND_MIN_INTERVAL", 5.0),
+            send_retries=_int("SEND_RETRIES", 1),
+            send_retry_delay=_float("SEND_RETRY_DELAY", 5.0),
         )

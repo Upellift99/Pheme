@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -27,6 +28,11 @@ def make_cfg(**overrides):
         allow_outbound=True,
         alert_after_failures=5,
         log_level="INFO",
+        # Les tests n'ont pas de CPE à ménager : pas d'attente entre envois ni
+        # avant un nouvel essai. L'espacement lui-même est testé plus bas.
+        send_min_interval=0.0,
+        send_retries=1,
+        send_retry_delay=0.0,
     )
     base.update(overrides)
     return Config(**base)
@@ -479,3 +485,118 @@ def test_handle_send_sms_failure_notifies():
     handle(make_cfg(), huawei, matrix, FakeStore(), "!sms +33612345678 Hello")
     assert huawei.sent == []
     assert matrix.notifications[0].startswith("❌")
+
+
+# --- CpeGate -----------------------------------------------------------
+
+
+def test_gate_serializes_concurrent_cpe_access():
+    """Deux opérations concurrentes ne se recouvrent jamais sur le CPE."""
+    gate = loops.CpeGate(min_send_interval=0.0)
+    overlaps = []
+    running = {"n": 0}
+
+    def slow_op():
+        running["n"] += 1
+        overlaps.append(running["n"])
+        time.sleep(0.02)
+        running["n"] -= 1
+
+    async def scenario():
+        await asyncio.gather(*(gate.run(slow_op) for _ in range(4)))
+
+    asyncio.run(scenario())
+    assert overlaps == [1, 1, 1, 1]
+
+
+def test_gate_spaces_consecutive_sends():
+    """Le deuxième envoi attend l'écart minimal ; le premier part tout de suite."""
+    gate = loops.CpeGate(min_send_interval=0.05)
+    stamps = []
+
+    def send():
+        stamps.append(time.monotonic())
+
+    async def scenario():
+        await gate.send(send)
+        await gate.send(send)
+
+    started = time.monotonic()
+    asyncio.run(scenario())
+
+    assert stamps[0] - started < 0.05
+    assert stamps[1] - stamps[0] >= 0.05
+
+
+def test_gate_blocks_inbox_poll_while_a_send_is_pacing():
+    """Pendant l'attente d'espacement, rien d'autre ne touche au CPE."""
+    gate = loops.CpeGate(min_send_interval=0.05)
+    order = []
+
+    async def scenario():
+        await gate.send(lambda: order.append("send-1"))
+        await asyncio.gather(
+            gate.send(lambda: order.append("send-2")),
+            gate.run(lambda: order.append("poll")),
+        )
+
+    asyncio.run(scenario())
+    # Le poll ne s'intercale pas : il attend que l'envoi espacé soit passé.
+    assert order == ["send-1", "send-2", "poll"]
+
+
+# --- envoi avec nouvel essai -------------------------------------------
+
+
+class BusyHuawei(FakeHuawei):
+    """Échoue les ``failures`` premiers envois, puis accepte."""
+
+    def __init__(self, failures):
+        super().__init__()
+        self.failures = failures
+        self.attempts = 0
+
+    def send_sms(self, number, text):
+        self.attempts += 1
+        if self.attempts <= self.failures:
+            raise RuntimeError("cpe busy")
+        self.sent.append((number, text))
+        return self.send_result
+
+
+def test_handle_send_sms_retries_after_a_transient_failure():
+    matrix, huawei = FakeMatrix(), BusyHuawei(failures=1)
+    handle(make_cfg(), huawei, matrix, FakeStore(), "!sms +33612345678 Hello")
+    assert huawei.attempts == 2
+    assert huawei.sent == [("+33612345678", "Hello")]
+    assert matrix.notifications[0].startswith("✅")
+
+
+def test_handle_send_sms_gives_up_after_configured_retries():
+    matrix, huawei = FakeMatrix(), BusyHuawei(failures=5)
+    handle(make_cfg(send_retries=2), huawei, matrix, FakeStore(), "!sms +33612345678 Hi")
+    assert huawei.attempts == 3
+    assert huawei.sent == []
+    assert matrix.notifications[0].startswith("❌")
+
+
+def test_handle_send_sms_without_retries():
+    matrix, huawei = FakeMatrix(), BusyHuawei(failures=1)
+    handle(make_cfg(send_retries=0), huawei, matrix, FakeStore(), "!sms +33612345678 Hi")
+    assert huawei.attempts == 1
+    assert matrix.notifications[0].startswith("❌")
+
+
+def test_send_retry_propagates_cancellation():
+    """Un arrêt du service ne doit pas être avalé par le nouvel essai."""
+
+    class Cancelling(FakeHuawei):
+        def send_sms(self, number, text):
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            loops._send_with_retry(
+                make_cfg(), loops.CpeGate(0.0), Cancelling(), "+33612345678", "hi"
+            )
+        )

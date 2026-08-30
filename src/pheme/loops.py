@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from .commands import ReplyLast, SendSms, Usage, parse_command
 from .config import Config
@@ -12,6 +13,43 @@ from .matrix_client import MatrixClient, MatrixMessage
 from .store import Store
 
 log = logging.getLogger("pheme.loops")
+
+
+class CpeGate:
+    """Sérialise les accès au CPE et espace les envois de SMS.
+
+    Chaque opération ouvre sa propre session web sur le CPE (cf.
+    ``huawei_client``), qui n'en accepte qu'un nombre limité en parallèle. Or
+    les deux boucles tournent en même temps : un poll d'inbox qui tombe pendant
+    un envoi, ou deux ``!sms`` postés coup sur coup, se marchent dessus — un
+    envoi sur deux échoue. Un verrou unique partagé par les deux boucles
+    supprime ce recouvrement, et ``min_send_interval`` laisse en plus au modem
+    le temps de finir un envoi avant d'en accepter un autre.
+    """
+
+    def __init__(self, min_send_interval: float = 5.0) -> None:
+        self._lock = asyncio.Lock()
+        self._min_send_interval = min_send_interval
+        self._last_send: float | None = None
+
+    async def run(self, func, *args):
+        """Exécute une opération CPE dans un thread, verrou pris."""
+        async with self._lock:
+            return await asyncio.to_thread(func, *args)
+
+    async def send(self, func, *args):
+        """Comme :meth:`run`, en respectant l'écart minimal entre deux envois."""
+        async with self._lock:
+            if self._last_send is not None:
+                wait = self._min_send_interval - (time.monotonic() - self._last_send)
+                if wait > 0:
+                    # On attend verrou en main : rien d'autre ne doit toucher au
+                    # CPE pendant que le modem finit l'envoi précédent.
+                    await asyncio.sleep(wait)
+            try:
+                return await asyncio.to_thread(func, *args)
+            finally:
+                self._last_send = time.monotonic()
 
 
 class Backoff:
@@ -47,10 +85,10 @@ async def _notify_safe(matrix: MatrixClient, text: str) -> None:
 
 
 async def _relay_new_messages(
-    cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
+    cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store, gate: CpeGate
 ) -> None:
     """Run one poll cycle: relay every unseen inbox message, then apply CPE flags."""
-    messages = await asyncio.to_thread(huawei.list_inbox)
+    messages = await gate.run(huawei.list_inbox)
     relayed = []
     for sms in messages:
         if store.is_relayed(sms.index):
@@ -72,11 +110,15 @@ async def _relay_new_messages(
     if relayed and (cfg.mark_as_read or cfg.delete_after_relay):
         read_indices = [s.index for s in relayed if cfg.mark_as_read and s.unread]
         delete_indices = [s.index for s in relayed if cfg.delete_after_relay]
-        await asyncio.to_thread(huawei.finalize, read_indices, delete_indices)
+        await gate.run(huawei.finalize, read_indices, delete_indices)
 
 
 async def inbound_loop(
-    cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
+    cfg: Config,
+    huawei: HuaweiClient,
+    matrix: MatrixClient,
+    store: Store,
+    gate: CpeGate | None = None,
 ) -> None:
     """Poll the CPE inbox on a timer, retrying and alerting when cycles fail.
 
@@ -85,12 +127,13 @@ async def inbound_loop(
     ``ALERT_AFTER_FAILURES`` consecutive failed cycles the room gets one warning,
     and one all-clear once polling recovers.
     """
+    gate = gate or CpeGate(cfg.send_min_interval)
     backoff = Backoff()
     failures = 0
     alerted = False
     while True:
         try:
-            await _relay_new_messages(cfg, huawei, matrix, store)
+            await _relay_new_messages(cfg, huawei, matrix, store, gate)
             backoff.reset()
             if alerted:
                 await _notify_safe(
@@ -122,13 +165,18 @@ async def inbound_loop(
 
 
 async def outbound_loop(
-    cfg: Config, huawei: HuaweiClient, matrix: MatrixClient, store: Store
+    cfg: Config,
+    huawei: HuaweiClient,
+    matrix: MatrixClient,
+    store: Store,
+    gate: CpeGate | None = None,
 ) -> None:
     """Long-poll Matrix /sync and send commanded SMS through the CPE."""
     if not cfg.allow_outbound:
         log.info("outbound disabled (ALLOW_OUTBOUND=false)")
         return
 
+    gate = gate or CpeGate(cfg.send_min_interval)
     backoff = Backoff()
     since = store.get_sync_token()
     while since is None:
@@ -150,7 +198,7 @@ async def outbound_loop(
         try:
             next_batch, messages = await matrix.sync(since)
             for message in messages:
-                await _handle_message(cfg, huawei, matrix, store, message)
+                await _handle_message(cfg, huawei, matrix, store, message, gate)
             since = next_batch
             store.set_sync_token(since)
             backoff.reset()
@@ -164,13 +212,47 @@ async def outbound_loop(
             await asyncio.sleep(delay)
 
 
+async def _send_with_retry(
+    cfg: Config, gate: CpeGate, huawei: HuaweiClient, number: str, text: str
+):
+    """Envoie le SMS, avec un nouvel essai après une pause si le CPE a refusé.
+
+    Un CPE occupé (session concurrente, modem qui finit un envoi) refuse la
+    requête au lieu de la mettre en file : c'est transitoire et le second essai
+    passe. Après ``send_retries`` tentatives supplémentaires, l'erreur remonte
+    et l'échec est signalé dans la room.
+    """
+    attempts = 1 + max(0, cfg.send_retries)
+    for attempt in range(1, attempts + 1):
+        try:
+            return await gate.send(huawei.send_sms, number, text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — on retente puis on relaie l'échec
+            if attempt == attempts:
+                raise
+            log.warning(
+                "sms send failed; retrying",
+                extra={
+                    "extra_fields": {
+                        "number": number,
+                        "attempt": attempt,
+                        "retry_in": cfg.send_retry_delay,
+                    }
+                },
+            )
+            await asyncio.sleep(cfg.send_retry_delay)
+
+
 async def _handle_message(
     cfg: Config,
     huawei: HuaweiClient,
     matrix: MatrixClient,
     store: Store,
     message: MatrixMessage,
+    gate: CpeGate | None = None,
 ) -> None:
+    gate = gate or CpeGate(cfg.send_min_interval)
     command = parse_command(message.body, message.sender, cfg.matrix_user_id)
     if command is None:
         return
@@ -191,7 +273,7 @@ async def _handle_message(
 
     segments = estimate_segments(text)
     try:
-        result = await asyncio.to_thread(huawei.send_sms, number, text)
+        result = await _send_with_retry(cfg, gate, huawei, number, text)
     except Exception:  # noqa: BLE001
         log.exception("failed to send sms", extra={"extra_fields": {"number": number}})
         await matrix.notify(f"❌ Failed to send SMS to {number}.")

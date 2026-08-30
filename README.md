@@ -34,6 +34,14 @@ Two independent async loops share one Huawei client and one SQLite store:
 A failure in one loop never stops the other, and a network/auth/Matrix error in a
 cycle is logged and retried with exponential backoff rather than crashing.
 
+**One CPE at a time:** the modem only accepts a couple of concurrent web
+sessions, and it can only push one SMS at a time. Both loops therefore go
+through a single lock, and consecutive sends are spaced by
+`SEND_MIN_INTERVAL` seconds — without it, a burst of `!sms` commands (a reminder
+fanned out to several recipients) makes roughly every other send fail. A send
+the CPE still refuses is retried `SEND_RETRIES` times, `SEND_RETRY_DELAY`
+seconds apart, before the failure is reported in the room.
+
 **Outage alerting:** a failing inbound loop is otherwise invisible — nothing is
 posted to the room when the CPE is unreachable, so a dead bridge looks exactly
 like a quiet one. After `ALERT_AFTER_FAILURES` consecutive failed polls the room
@@ -150,6 +158,9 @@ All configuration is via environment variables (see `.env.example`):
 | `DELETE_AFTER_RELAY` | `false` | Delete relayed SMS from the CPE. |
 | `ALLOW_OUTBOUND` | `true` | Set `false` for a read-only bridge. |
 | `ALERT_AFTER_FAILURES` | `5` | Consecutive failed inbox polls before the room is warned. `0` disables. |
+| `SEND_MIN_INTERVAL` | `5` | Seconds enforced between two outbound SMS. `0` disables the spacing. |
+| `SEND_RETRIES` | `1` | Extra attempts when the CPE refuses a send. `0` disables. |
+| `SEND_RETRY_DELAY` | `5` | Seconds waited before a new attempt. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ## Running
